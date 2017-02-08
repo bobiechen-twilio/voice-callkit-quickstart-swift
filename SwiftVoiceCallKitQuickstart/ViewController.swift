@@ -326,6 +326,8 @@ class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationD
             action.fail()
             return
         }
+        
+        self.callInvite = nil
 
         call.uuid = action.callUUID
         action.fulfill()
@@ -338,6 +340,7 @@ class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationD
 
         if (self.callInvite != nil && self.callInvite?.state == .pending) {
             self.callInvite?.reject()
+            self.callInvite = nil
         } else if (self.call != nil) {
             self.call?.disconnect()
         }
