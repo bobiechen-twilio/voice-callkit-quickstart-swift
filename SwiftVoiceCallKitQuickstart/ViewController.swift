@@ -14,7 +14,7 @@ import TwilioVoiceClient
 let baseURLString = <#URL TO YOUR ACCESS TOKEN SERVER#>
 let accessTokenEndpoint = "/accessToken"
 
-class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationDelegate, TVOIncomingCallDelegate, TVOOutgoingCallDelegate, CXProviderDelegate {
+class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationDelegate, TVOCallDelegate, CXProviderDelegate {
 
     @IBOutlet weak var placeCallButton: UIButton!
     @IBOutlet weak var iconView: UIImageView!
@@ -26,8 +26,8 @@ class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationD
     var isSpinning: Bool
     var incomingAlertController: UIAlertController?
 
-    var incomingCall:TVOIncomingCall?
-    var outgoingCall:TVOOutgoingCall?
+    var callInvite:TVOCallInvite?
+    var call:TVOCall?
 
     let callKitProvider:CXProvider
     let callKitCallController:CXCallController
@@ -35,6 +35,8 @@ class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationD
     required init?(coder aDecoder: NSCoder) {
         isSpinning = false
         voipRegistry = PKPushRegistry.init(queue: DispatchQueue.main)
+        
+        VoiceClient.sharedInstance().logLevel = .verbose
 
         let configuration = CXProviderConfiguration(localizedName: "CallKit Quickstart")
         configuration.maximumCallGroups = 1
@@ -77,10 +79,15 @@ class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationD
     }
 
     @IBAction func placeCall(_ sender: UIButton) {
-        let uuid = UUID()
-        let handle = "Voice Bot"
-
-        performStartCallAction(uuid: uuid, handle: handle)
+        if (self.call != nil && self.call?.state == .connected) {
+            self.call?.disconnect()
+            self.toggleUIState(isEnabled: false)
+        } else {
+            let uuid = UUID()
+            let handle = "Voice Bot"
+            
+            performStartCallAction(uuid: uuid, handle: handle)
+        }
     }
 
 
@@ -143,23 +150,32 @@ class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationD
 
 
     // MARK: TVONotificaitonDelegate
-    func incomingCallReceived(_ incomingCall: TVOIncomingCall) {
-        NSLog("incomingCallReceived:")
+    func callInviteReceived(_ callInvite: TVOCallInvite) {
+        NSLog("callInviteReceived:")
         
-        self.incomingCall = incomingCall
-        self.incomingCall?.delegate = self
+        if (self.callInvite != nil && self.callInvite?.state == .pending) {
+            NSLog("Already a pending incoming call invite.");
+            NSLog("  >> Ignoring call from %@", callInvite.from);
+            return;
+        } else if (self.call != nil) {
+            NSLog("Already an active call.");
+            NSLog("  >> Ignoring call from %@", callInvite.from);
+            return;
+        }
+        
+        self.callInvite = callInvite
 
-        reportIncomingCall(from: "Voice Bot", uuid: incomingCall.uuid)
+        reportIncomingCall(from: "Voice Bot", uuid: callInvite.uuid)
     }
     
-    func incomingCallCancelled(_ incomingCall: TVOIncomingCall?) {
-        NSLog("incomingCallCancelled:")
+    func callInviteCancelled(_ callInvite: TVOCallInvite?) {
+        NSLog("callInviteCancelled:")
         
-        if let incomingCall = incomingCall {
-            performEndCallAction(uuid: incomingCall.uuid)
+        if let callInvite = callInvite {
+            performEndCallAction(uuid: callInvite.uuid)
         }
 
-        self.incomingCall = nil
+        self.callInvite = nil
     }
     
     func notificationError(_ error: Error) {
@@ -167,60 +183,37 @@ class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationD
     }
     
     
-    // MARK: TVOIncomingCallDelegate
-    func incomingCallDidConnect(_ incomingCall: TVOIncomingCall) {
-        NSLog("incomingCallDidConnect:")
+    // MARK: TVOCallDelegate
+    func callDidConnect(_ call: TVOCall) {
+        NSLog("callDidConnect:")
         
-        self.incomingCall = incomingCall
-        toggleUIState(isEnabled: false)
+        self.call = call
+        
+        self.placeCallButton.setTitle("Hang Up", for: .normal)
+        
+        toggleUIState(isEnabled: true)
         stopSpin()
         routeAudioToSpeaker()
     }
     
-    func incomingCallDidDisconnect(_ incomingCall: TVOIncomingCall) {
-        NSLog("incomingCallDidDisconnect:")
+    func callDidDisconnect(_ call: TVOCall) {
+        NSLog("callDidDisconnect:")
 
-        performEndCallAction(uuid: incomingCall.uuid)
+        performEndCallAction(uuid: call.uuid)
 
-        self.incomingCall = nil
-        toggleUIState(isEnabled: true)
-    }
-    
-    func incomingCall(_ incomingCall: TVOIncomingCall, didFailWithError error: Error) {
-        NSLog("incomingCall:didFailWithError: \(error.localizedDescription)")
-
-        performEndCallAction(uuid: incomingCall.uuid)
-
-        self.incomingCall = nil
-        toggleUIState(isEnabled: true)
-        stopSpin()
-    }
-    
-    
-    // MARK: TVOOutgoingCallDelegate
-    func outgoingCallDidConnect(_ outgoingCall: TVOOutgoingCall) {
-        NSLog("outgoingCallDidConnect:")
+        self.call = nil
         
-        toggleUIState(isEnabled: false)
-        stopSpin()
-        routeAudioToSpeaker()
-    }
-    
-    func outgoingCallDidDisconnect(_ outgoingCall: TVOOutgoingCall) {
-        NSLog("outgoingCallDidDisconnect:")
-
-        performEndCallAction(uuid: outgoingCall.uuid)
+        self.placeCallButton.setTitle("Place Outgoing Call", for: .normal)
         
-        self.outgoingCall = nil
         toggleUIState(isEnabled: true)
     }
     
-    func outgoingCall(_ outgoingCall: TVOOutgoingCall, didFailWithError error: Error) {
-        NSLog("outgoingCall:didFailWithError: \(error.localizedDescription)")
+    func call(_ call: TVOCall, didFailWithError error: Error) {
+        NSLog("call:didFailWithError: \(error.localizedDescription)")
 
-        performEndCallAction(uuid: outgoingCall.uuid)
+        performEndCallAction(uuid: call.uuid)
 
-        self.outgoingCall = nil
+        self.call = nil
         toggleUIState(isEnabled: true)
         stopSpin()
     }
@@ -305,15 +298,15 @@ class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationD
 
         VoiceClient.sharedInstance().configureAudioSession()
 
-        outgoingCall = VoiceClient.sharedInstance().call(accessToken, params: [:], delegate: self)
+        call = VoiceClient.sharedInstance().call(accessToken, params: [:], delegate: self)
 
-        guard let outgoingCall = outgoingCall else {
+        guard let call = call else {
             NSLog("Failed to start outgoing call")
             action.fail()
             return
         }
 
-        outgoingCall.uuid = action.callUUID
+        call.uuid = action.callUUID
 
         toggleUIState(isEnabled: false)
         startSpin()
@@ -329,8 +322,14 @@ class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationD
         //      `provider:performAnswerCallAction:` per the WWDC examples.
         // VoiceClient.sharedInstance().configureAudioSession()
 
-        incomingCall?.accept(with: self)
+        guard let call = self.callInvite?.accept(with: self) else {
+            action.fail()
+            return
+        }
+        
+        self.callInvite = nil
 
+        call.uuid = action.callUUID
         action.fulfill()
     }
 
@@ -339,14 +338,11 @@ class ViewController: UIViewController, PKPushRegistryDelegate, TVONotificationD
 
         VoiceClient.sharedInstance().stopAudioDevice()
 
-        if let incomingCall = incomingCall {
-            if incomingCall.state == .pending {
-                incomingCall.reject()
-            } else {
-                incomingCall.disconnect()
-            }
-        } else if let outgoingCall = outgoingCall {
-            outgoingCall.disconnect()
+        if (self.callInvite != nil && self.callInvite?.state == .pending) {
+            self.callInvite?.reject()
+            self.callInvite = nil
+        } else if (self.call != nil) {
+            self.call?.disconnect()
         }
 
         action.fulfill()
